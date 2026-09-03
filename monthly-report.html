@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>月次実費精算集計表</title>
+<style>
+  :root {
+    --paper: #F5F1E8;
+    --ink: #26241F;
+    --ink-faint: #8A8271;
+    --line: #D8D0BC;
+    --accent: #3E6259;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #DCD5C3;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    color: var(--ink);
+    padding: 20px 12px 60px;
+  }
+  .toolbar {
+    max-width: 780px;
+    margin: 0 auto 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar input[type="month"] {
+    padding: 9px 12px;
+    border-radius: 8px;
+    border: 1.5px solid var(--line);
+    font-size: 14px;
+    background: #fff;
+  }
+  .toolbar button {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: none;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  #loadBtn { background: var(--accent); color: #fff; }
+  #printBtn { background: var(--ink); color: var(--paper); }
+
+  .sheet {
+    max-width: 780px;
+    margin: 0 auto;
+    background: #fff;
+    padding: 32px 36px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.08), 0 12px 30px rgba(0,0,0,0.15);
+  }
+  .doc-header { text-align: center; margin-bottom: 24px; }
+  .doc-header .org { font-size: 12px; color: var(--ink-faint); letter-spacing: 0.15em; margin-bottom: 4px; }
+  .doc-header .doc-title { font-size: 22px; font-weight: 800; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .doc-header .doc-month { font-size: 15px; color: var(--ink-faint); }
+
+  table { width: 100%; border-collapse: collapse; margin-bottom: 28px; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: right; }
+  th { background: var(--accent); color: #fff; text-align: center; font-weight: 700; font-size: 12px; }
+  td.cat-name { text-align: left; font-weight: 600; }
+  tr.total-row td { font-weight: 800; background: #F5F1E8; }
+  tr.total-row td.cat-name { color: var(--ink); }
+  .section-title { font-size: 14px; font-weight: 700; margin: 24px 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--ink); }
+  .empty-note { font-size: 12px; color: var(--ink-faint); text-align: center; padding: 20px 0; }
+  .generated-note { font-size: 11px; color: var(--ink-faint); text-align: right; margin-top: 8px; }
+
+  @media print {
+    body { background: #fff; padding: 0; }
+    .toolbar { display: none; }
+    .sheet { box-shadow: none; max-width: 100%; padding: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <input type="month" id="monthInput">
+  <button id="loadBtn" type="button">表示する</button>
+  <button id="printBtn" type="button">🖨 印刷する</button>
+</div>
+
+<div class="sheet">
+  <div class="doc-header">
+    <div class="org">合同会社イーワンスクエア</div>
+    <div class="doc-title">経費実績集計表（拠点別・費目別）</div>
+    <div class="doc-month" id="monthLabel"></div>
+  </div>
+
+  <div id="content">
+    <div class="empty-note">上の月を選んで「表示する」を押してください</div>
+  </div>
+</div>
+
+<script>
+const GAS_URL = "https://script.google.com/macros/s/AKfycbymWLzTMYcUyrhKn44R_cz8vwcTHH_seuaNDXaAfKb91ENRY8dRj2F8-0WbMsr5jkrVZQ/exec";
+
+const FACILITY_ORDER = ["山手", "新神野", "共通"];
+function sortFacilities(list) {
+  return list.slice().sort((a, b) => {
+    const ia = FACILITY_ORDER.indexOf(a), ib = FACILITY_ORDER.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b, 'ja');
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+}
+
+function todayMonthStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+document.getElementById('monthInput').value = todayMonthStr();
+
+function buildTable(title, summaryObj, facilities, categories) {
+  if (facilities.length === 0 || categories.length === 0) {
+    return `<div class="section-title">${title}</div><div class="empty-note">この月のデータはありません</div>`;
+  }
+  const facs = sortFacilities(facilities);
+  const cats = categories.slice().sort((a, b) => a.localeCompare(b, 'ja'));
+
+  let html = `<div class="section-title">${title}</div><table>`;
+  html += `<tr><th style="text-align:left;">費目</th>${facs.map(f => `<th>${f}</th>`).join('')}<th>合計</th></tr>`;
+
+  const facTotals = {};
+  facs.forEach(f => facTotals[f] = 0);
+  let grandTotal = 0;
+
+  cats.forEach(cat => {
+    let rowTotal = 0;
+    let cells = facs.map(f => {
+      const amt = (summaryObj[f] && summaryObj[f][cat]) || 0;
+      facTotals[f] += amt;
+      rowTotal += amt;
+      return `<td>${amt ? '¥' + amt.toLocaleString() : '－'}</td>`;
+    }).join('');
+    grandTotal += rowTotal;
+    html += `<tr><td class="cat-name">${cat}</td>${cells}<td>¥${rowTotal.toLocaleString()}</td></tr>`;
+  });
+
+  html += `<tr class="total-row"><td class="cat-name">合計</td>${facs.map(f => `<td>¥${facTotals[f].toLocaleString()}</td>`).join('')}<td>¥${grandTotal.toLocaleString()}</td></tr>`;
+  html += `</table>`;
+  return html;
+}
+
+async function loadReport() {
+  const month = document.getElementById('monthInput').value;
+  if (!month) return;
+  const contentEl = document.getElementById('content');
+  const monthLabelEl = document.getElementById('monthLabel');
+  contentEl.innerHTML = '<div class="empty-note">読み込み中…</div>';
+
+  try {
+    const res = await fetch(`${GAS_URL}?month=${month}`);
+    const data = await res.json();
+    const [y, m] = data.month.split('-');
+    monthLabelEl.textContent = `対象月：${y}年${parseInt(m,10)}月`;
+
+    let html = buildTable('支出（食費・日用品費・備品・水道光熱費など）', data.summary, data.facilities, data.categories);
+
+    const incomeFacs = Object.keys(data.incomeSummary || {});
+    const incomeCats = new Set();
+    incomeFacs.forEach(f => Object.keys(data.incomeSummary[f]).forEach(c => incomeCats.add(c)));
+    if (incomeFacs.length > 0) {
+      html += buildTable('収入（家賃助成金・国保連入金など）', data.incomeSummary, incomeFacs, Array.from(incomeCats));
+    }
+
+    html += `<div class="generated-note">出力日：${new Date().toLocaleDateString('ja-JP')}</div>`;
+    contentEl.innerHTML = html;
+  } catch (err) {
+    contentEl.innerHTML = '<div class="empty-note">読み込みに失敗… GASのURL・アクセス権限を確認して</div>';
+    console.error(err);
+  }
+}
+
+document.getElementById('loadBtn').addEventListener('click', loadReport);
+document.getElementById('printBtn').addEventListener('click', () => window.print());
+
+loadReport();
+</script>
+</body>
+</html>
